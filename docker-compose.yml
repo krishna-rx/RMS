@@ -1,0 +1,12 @@
+services:
+  db:
+    image: "postgres:13"
+    container_name: rms-db
+    ports:
+      - "5435:5432"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=local
+      - POSTGRES_PASSWORD=local
+      - POSTGRES_DB=rms
