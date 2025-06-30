@@ -2,10 +2,10 @@ package handler
 
 import (
 	"database/sql"
-	"encoding/json"
-	"fmt"
+	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/sirupsen/logrus"
 	"github.com/umahmood/haversine"
 	"net/http"
@@ -13,24 +13,29 @@ import (
 	"rms/database/dbHelper"
 	"rms/models"
 	"rms/utils"
-	"time"
 )
 
+var JSON = jsoniter.ConfigCompatibleWithStandardLibrary
+
 func Register(w http.ResponseWriter, r *http.Request) {
-	var user models.User
-	err := json.NewDecoder(r.Body).Decode(&user)
+	var user models.UserRequest
+	err := JSON.NewDecoder(r.Body).Decode(&user)
 	if err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	fmt.Println(user)
-	fmt.Println(user.Latitude, user.Longitude)
+	validate := validator.New()
+	err = validate.Struct(user)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	exist, existErr := dbHelper.IsUserExists(user.Email)
 	if existErr != nil {
-		logrus.Errorf("IsUserExists query error: %s", existErr.Error())
+		http.Error(w, existErr.Error(), http.StatusBadRequest)
 	}
 	if exist {
-		http.Error(w, "user already exists", http.StatusBadRequest)
+		http.Error(w, "user already exits", http.StatusBadRequest)
 		return
 	}
 	hashedPassword, err := utils.HashedPassword(user.Password)
@@ -38,74 +43,84 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to generate hashedPassword", http.StatusBadRequest)
 		return
 	}
-
-	err = dbHelper.CreateUser(user.Name, user.Email, hashedPassword, user.Address, user.Latitude, user.Longitude)
+	user.Password = hashedPassword
+	err = dbHelper.CreateUser(user)
 	if err != nil {
 		http.Error(w, "failed to create user", http.StatusBadRequest)
 		return
 	}
-	err = json.NewEncoder(w).Encode(struct {
-		Message string `json:"message"`
-	}{"User created successfully"})
+	response := models.UserResponse{
+		Message:   "User created successfully",
+		Name:      user.Name,
+		Email:     user.Email,
+		Address:   user.Address,
+		Latitude:  user.Latitude,
+		Longitude: user.Longitude,
+	}
+	err = JSON.NewEncoder(w).Encode(response)
 	if err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		http.Error(w, "failed to encode response", http.StatusInternalServerError)
 		return
 	}
 }
 
 func Login(w http.ResponseWriter, r *http.Request) {
-	var creds struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
-	err := json.NewDecoder(r.Body).Decode(&creds)
+	var login models.LoginRequest
+	err := JSON.NewDecoder(r.Body).Decode(&login)
 	if err != nil {
 		http.Error(w, "invalid JSON response", http.StatusBadRequest)
 		return
 	}
-	var hashedPassword, userID string
-	err = database.DB.QueryRow("SELECT id ,password FROM users WHERE email = $1", creds.Email).Scan(&userID, &hashedPassword)
+	validate := validator.New()
+	err = validate.Struct(login)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var hashedPassword string
+	var userID uuid.UUID
+	err = database.DB.QueryRow("SELECT id ,password FROM users WHERE email = $1", login.Email).Scan(&userID, &hashedPassword)
 	if err != nil {
 		http.Error(w, "user not found", http.StatusUnauthorized)
 		return
 	}
-	if !utils.CheckPasswordHash(creds.Password, hashedPassword) {
+	if !utils.CheckPasswordHash(login.Password, hashedPassword) {
 		logrus.Errorf("invalid password %+v", err)
 	}
-	SQL := `INSERT INTO user_session (user_id) VALUES ($1) returning id`
-	var sessionID string
-	err = database.DB.Get(&sessionID, SQL, userID)
-	if err != nil {
-		http.Error(w, "session not inserted in database", http.StatusInternalServerError)
-		return
+	var userSessionID uuid.UUID
+	userSessionID, err = dbHelper.CreateUserSession(userID)
+
+	userResponse := models.LoginResponse{
+		Message:               "User logged in",
+		Name:                  login.Email,
+		UserSessionIDResponse: userSessionID,
 	}
-	err = json.NewEncoder(w).Encode(map[string]string{
-		"SessionToken": sessionID,
-	})
+	err = JSON.NewEncoder(w).Encode(userResponse)
 	if err != nil {
 		http.Error(w, "failed to encode response", http.StatusInternalServerError)
 	}
 }
+
 func Logout(w http.ResponseWriter, r *http.Request) {
-	sessionToken := r.Header.Get("Authorization")
-	if sessionToken == "" {
+	userSessionToken := r.Header.Get("Authorization")
+	if userSessionToken == "" {
 		http.Error(w, "missing session token", http.StatusBadRequest)
 		return
 	}
 	var archived sql.NullTime
-	err := database.DB.QueryRow(` SELECT archived_at FROM user_session WHERE id = $1`, sessionToken).Scan(&archived)
+	err := database.DB.QueryRow(` SELECT archived_at FROM user_session WHERE id = $1`, userSessionToken).Scan(&archived)
 	if err != nil {
-		http.Error(w, "fession not found", http.StatusNotFound)
+		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
-	_, err = database.DB.Exec(` UPDATE user_session SET archived_at = $1 WHERE id = $2`, time.Now(), sessionToken)
-	if err != nil {
-		http.Error(w, "failed to update session", http.StatusInternalServerError)
-		return
-	}
-	json.NewEncoder(w).Encode(map[string]string{
+	err = dbHelper.LogoutUserByArchiving(userSessionToken)
+
+	err = JSON.NewEncoder(w).Encode(map[string]string{
 		"message": "logout successfully",
 	})
+	if err != nil {
+		http.Error(w, "failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 func GetAllUsers(w http.ResponseWriter, r *http.Request) {
@@ -115,16 +130,16 @@ func GetAllUsers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to get users", http.StatusInternalServerError)
 	}
 	defer rows.Close()
-	var users []models.User
+	var users []models.UserRequest
 	for rows.Next() {
-		var user models.User
-		err = rows.Scan(&user.ID, &user.Name, &user.Email)
+		var user models.UserRequest
+		err = rows.Scan(&user.Name, &user.Email)
 		if err != nil {
 			http.Error(w, "failed to get user after scanning", http.StatusInternalServerError)
 		}
 		users = append(users, user)
 	}
-	json.NewEncoder(w).Encode(users)
+	JSON.NewEncoder(w).Encode(users)
 }
 
 func GetAllRestaurant(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +167,7 @@ func GetAllRestaurant(w http.ResponseWriter, r *http.Request) {
 		}
 		restaurants = append(restaurants, restaurant)
 	}
-	json.NewEncoder(w).Encode(restaurants)
+	JSON.NewEncoder(w).Encode(restaurants)
 }
 
 func GetAllDishes(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +195,7 @@ func GetAllDishes(w http.ResponseWriter, r *http.Request) {
 		}
 		dishes = append(dishes, dish)
 	}
-	json.NewEncoder(w).Encode(dishes)
+	JSON.NewEncoder(w).Encode(dishes)
 }
 
 func GetDistanceFromUser(w http.ResponseWriter, r *http.Request) {
@@ -222,7 +237,7 @@ func GetDistanceFromUser(w http.ResponseWriter, r *http.Request) {
 	Rcr := haversine.Coord{Lat: Rcordinate.lat, Lon: Rcordinate.long}
 	Ucr := haversine.Coord{Lat: Ucordinate.lat, Lon: Ucordinate.long}
 	_, km := haversine.Distance(Rcr, Ucr)
-	json.NewEncoder(w).Encode(map[string]float64{
+	JSON.NewEncoder(w).Encode(map[string]float64{
 		"Distance from restaurant to user's location": km,
 	})
 }

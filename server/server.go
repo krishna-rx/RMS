@@ -15,10 +15,6 @@ type Server struct {
 
 func SetupRoutes(addr string) *Server {
 	r := mux.NewRouter().StrictSlash(true)
-	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("Hello World in this world"))
-	}).Methods("GET")
-
 	r.HandleFunc("/register", handler.Register).Methods("POST")
 	r.HandleFunc("/login", handler.Login).Methods("POST")
 	r.HandleFunc("/restaurant/{restaurant_id}", handler.GetAllRestaurant).Methods("GET")

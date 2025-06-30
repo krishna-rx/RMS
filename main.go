@@ -1,11 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
 	"os"
 	"rms/database"
 	"rms/server"
+	"strings"
 )
 
 func main() {
@@ -18,8 +20,13 @@ func main() {
 	host := os.Getenv("DB_HOST")
 	port := os.Getenv("DB_PORT")
 	dbname := os.Getenv("DB_NAME")
-	consStr := "postgres://" + user + ":" + password + "@" + host + ":" + port + "/" + dbname + "?sslmode=disable"
-	database.InitDBAndMirate(consStr)
+
+	var builder strings.Builder
+	_, err = fmt.Fprintf(&builder, "postgres://%s:%s@%s:%s/%s?sslmode=disable", user, password, host, port, dbname)
+	if err != nil {
+		return
+	}
+	database.InitDBAndMirate(builder.String())
 	defer database.CloseDB()
 	s := server.SetupRoutes(":8080")
 	s.Start()

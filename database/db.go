@@ -2,6 +2,7 @@ package database
 
 import (
 	"errors"
+	"fmt"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
@@ -53,4 +54,33 @@ func CloseDB() {
 	if err != nil {
 		logrus.Errorf("failed to close postgres: %v", err)
 	}
+}
+
+func Tx(db *sqlx.DB, fn func(tx *sqlx.Tx) error) error {
+	tx, err := db.Beginx()
+	if err != nil {
+		return fmt.Errorf("start tx failed: %w", err)
+	}
+
+	defer func() {
+		if p := recover(); p != nil {
+			if rollBackErr := tx.Rollback(); rollBackErr != nil {
+				logrus.Errorf("failed to recover : %v", err)
+				return
+			}
+			panic(p)
+		} else if err != nil {
+			if rollBackErr := tx.Rollback(); rollBackErr != nil {
+				logrus.Errorf("failed to rollback transaction: %v", err)
+				return
+			}
+		} else {
+			if commitErr := tx.Commit(); commitErr != nil {
+				logrus.Errorf("failed to commit transaction: %v", commitErr)
+				return
+			}
+		}
+	}()
+	err = fn(tx)
+	return err
 }

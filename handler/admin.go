@@ -92,7 +92,7 @@ func CreateDishes(w http.ResponseWriter, r *http.Request) {
 func CreateSubadmin(w http.ResponseWriter, r *http.Request) {
 	roles := r.Context().Value("roles").([]string)
 	if utils.HasRole(roles, "ADMIN") {
-		var user models.User
+		var user models.UserRequest
 		err := json.NewDecoder(r.Body).Decode(&user)
 		if err != nil {
 			http.Error(w, "invalid JSON", http.StatusBadRequest)
@@ -132,13 +132,13 @@ func GetAllSubadmin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error getting all subadmins", http.StatusBadRequest)
 	}
 	defer rows.Close()
-	var users []models.User
+	var users []models.UserRequest
 	if rows == nil {
 		http.Error(w, "no subadmins found", http.StatusBadRequest)
 		return
 	}
 	for rows.Next() {
-		var user models.User
+		var user models.UserRequest
 		err := rows.Scan(&user.Name, &user.Email)
 		if err != nil {
 			http.Error(w, "error getting iterating all subadmins", http.StatusBadRequest)
