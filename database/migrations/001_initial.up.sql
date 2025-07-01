@@ -4,11 +4,13 @@ CREATE TABLE IF NOT EXISTS users
     name TEXT NOT NULL,
     email TEXT NOT NULL,
     password TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     archived_at TIMESTAMP WITH TIME ZONE
  );
+CREATE INDEX IF NOT EXISTS unique_user on users (email) WHERE archived_at IS NULL;
 CREATE TABLE IF NOT EXISTS roles(
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    role TEXT NOT NULL
+    role TEXT UNIQUE NOT NULL
 );
 CREATE TABLE IF NOT EXISTS user_roles(
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -21,13 +23,16 @@ CREATE TABLE IF NOT EXISTS addresses (
     user_id UUID REFERENCES users (id) NOT NULL,
     address TEXT NOT NULL,
     latitude DOUBLE PRECISION NOT NULL,
-    longitude DOUBLE PRECISION NOT NULL
+    longitude DOUBLE PRECISION NOT NULL,
+    archived_at TIMESTAMP WITH TIME ZONE
 );
 CREATE TABLE IF NOT EXISTS restaurants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
     location TEXT NOT NULL,
     created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    archived_at TIMESTAMP WITH TIME ZONE,
     latitude DOUBLE PRECISION NOT NULL,
     longitude DOUBLE PRECISION NOT NULL
 );
@@ -35,13 +40,20 @@ CREATE TABLE IF NOT EXISTS dishes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
     description TEXT,
-    price NUMERIC NOT NULL CHECK (price >=0),
+    price NUMERIC NOT NULL CHECK (price >= 0),
     restaurant_id UUID REFERENCES restaurants(id),
-    created_by UUID REFERENCES users(id) ON DELETE SET NULL
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    archived_at TIMESTAMP WITH TIME ZONE
 );
 CREATE TABLE IF NOT EXISTS user_session (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     archived_at TIMESTAMP WITH TIME ZONE
-)
+);
+INSERT INTO roles (role)
+VALUES
+('USER'),
+('ADMIN'),
+('SUBADMIN')
+ON CONFLICT (role) DO NOTHING;
