@@ -2,34 +2,70 @@ package middlewares
 
 import (
 	"context"
-	"database/sql"
+	"fmt"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"net/http"
+	"os"
 	"rms/database"
-	"time"
+	"rms/database/dbHelper"
+	"rms/models"
+	"strings"
 )
 
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			http.Error(w, "sessionToken should be provided", http.StatusUnauthorized)
+			http.Error(w, "missing authorization header", http.StatusUnauthorized)
 			return
 		}
-		var expiryAt sql.NullTime
-		err := database.DB.QueryRow(` SELECT archived_at FROM user_session WHERE id = $1`, authHeader).Scan(&expiryAt)
-		if err != nil {
-			http.Error(w, "Session not found", http.StatusNotFound)
+
+		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+		if tokenStr == authHeader {
+			http.Error(w, "invalid token format dont found bearer", http.StatusUnauthorized)
 			return
 		}
-		if expiryAt.Valid && expiryAt.Time.Before(time.Now()) {
-			http.Error(w, "Session expired", http.StatusUnauthorized)
+		token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+			if token.Method != jwt.SigningMethodHS256 {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return []byte(os.Getenv("JWT_SECRET")), nil
+		})
+		if err != nil || !token.Valid {
+			http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
 			return
 		}
-		ctx := context.WithValue(r.Context(), "userSession_id", authHeader)
+
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok || !token.Valid {
+			http.Error(w, "Invalid token claims", http.StatusUnauthorized)
+			return
+		}
+		rawUserID, exists := claims["user_id"]
+
+		if !exists || rawUserID == nil {
+			http.Error(w, "user_id claim missing", http.StatusUnauthorized)
+			return
+		}
+
+		userID, ok := rawUserID.(string)
+		if !ok {
+			http.Error(w, "user_id claim is not a string", http.StatusUnauthorized)
+			return
+		}
+		var rolesString []string
+		err = dbHelper.GetAllRoleByID(&rolesString, userID)
+		var roles []models.Role
+		for _, role := range rolesString {
+			roles = append(roles, models.Role(role))
+		}
+		ctx := context.WithValue(r.Context(), "user_id", userID)
+		ctx = context.WithValue(ctx, "roles", roles)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
+
 func CheckOwnership(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")

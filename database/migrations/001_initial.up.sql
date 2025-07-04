@@ -4,19 +4,23 @@ CREATE TABLE IF NOT EXISTS users
     name TEXT NOT NULL,
     email TEXT NOT NULL,
     password TEXT NOT NULL,
+    created_by UUID,
+    updated_by UUID,
+    updated_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     archived_at TIMESTAMP WITH TIME ZONE
  );
-CREATE INDEX IF NOT EXISTS unique_user on users (email) WHERE archived_at IS NULL;
-CREATE TABLE IF NOT EXISTS roles(
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    role TEXT UNIQUE NOT NULL
+CREATE UNIQUE INDEX IF NOT EXISTS unique_user on users (email) WHERE archived_at IS NULL;
+CREATE TYPE role_type AS ENUM (
+    'admin',
+    'sub_admin',
+    'user'
 );
 CREATE TABLE IF NOT EXISTS user_roles(
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users (id) NOT NULL,
-    roles_id UUID REFERENCES roles (id) NOT NULL,
-    UNIQUE(user_id, roles_id)
+    role role_type NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 CREATE TABLE IF NOT EXISTS addresses (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -45,15 +49,3 @@ CREATE TABLE IF NOT EXISTS dishes (
     created_by UUID REFERENCES users(id) ON DELETE SET NULL,
     archived_at TIMESTAMP WITH TIME ZONE
 );
-CREATE TABLE IF NOT EXISTS user_session (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    archived_at TIMESTAMP WITH TIME ZONE
-);
-INSERT INTO roles (role)
-VALUES
-('USER'),
-('ADMIN'),
-('SUBADMIN')
-ON CONFLICT (role) DO NOTHING;

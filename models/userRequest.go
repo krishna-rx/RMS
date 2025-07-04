@@ -4,13 +4,30 @@ import "github.com/google/uuid"
 
 type UserRequest struct {
 	ID        uuid.UUID `json:"id" db:"id"`
-	Name      string    `json:"name" db:"name" validate:"required"`
-	Email     string    `json:"email" db:"email" validate:"required"`
-	Password  string    `json:"password" db:"password" validate:"required"`
-	Address   string    `json:"address" db:"address" validate:"required"`
-	Latitude  float64   `json:"late" db:"latitude" validate:"required"`
-	Longitude float64   `json:"long" db:"longitude" validate:"required"`
+	Name      string    `json:"name" db:"name"`
+	Email     string    `json:"email" db:"email"`
+	Password  string    `json:"password" db:"password"`
+	Address   string    `json:"address" db:"address"`
+	Latitude  float64   `json:"late" db:"latitude"`
+	Longitude float64   `json:"long" db:"longitude"`
 }
+type UserWithRoleRequest struct {
+	ID        uuid.UUID `json:"id" db:"id"`
+	Name      string    `json:"name" db:"name"`
+	Email     string    `json:"email" db:"email"`
+	Role      string    `json:"role" db:"role"`
+	Password  string    `json:"password" db:"password"`
+	Address   string    `json:"address" db:"address"`
+	Latitude  float64   `json:"late" db:"latitude"`
+	Longitude float64   `json:"long" db:"longitude"`
+}
+type Role string
+
+const (
+	RoleAdmin    Role = "admin"
+	RoleSubAdmin Role = "sub_admin"
+	RoleUser     Role = "user"
+)
 
 type Dish struct {
 	Name        string  `db:"name" json:"name"`
@@ -28,10 +45,20 @@ type Restaurant struct {
 }
 
 type LoginRequest struct {
-	Email    string `json:"email" validate:"required"`
-	Password string `json:"password" validate:"required"`
+	Email    string `json:"email" `
+	Password string `json:"password" `
 }
-
+type LoginIDAndPassword struct {
+	UserID   uuid.UUID `json:"id" db:"id"`
+	Email    string    `json:"email" db:"email" `
+	Password string    `json:"string" db:"password" `
+}
+type LoginIDAndPasswordByRole struct {
+	UserID   uuid.UUID `json:"id" db:"id"`
+	Role     string    `json:"role" db:"role"`
+	Email    string    `json:"email" db:"email"`
+	Password string    `json:"password" db:"password"`
+}
 type AddressRequest struct {
 	UserID    uuid.UUID `json:"userID" db:"user_id"`
 	Address   string    `json:"address" db:"address"`

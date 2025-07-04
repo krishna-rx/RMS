@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -133,7 +132,9 @@ func GetAllSubadmin(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 	var users []models.UserRequest
+
 	if rows == nil {
+
 		http.Error(w, "no subadmins found", http.StatusBadRequest)
 		return
 	}

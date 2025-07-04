@@ -1,11 +1,8 @@
 package handler
 
 import (
-	"database/sql"
-	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
-	jsoniter "github.com/json-iterator/go"
 	"github.com/sirupsen/logrus"
 	"github.com/umahmood/haversine"
 	"net/http"
@@ -13,40 +10,47 @@ import (
 	"rms/database/dbHelper"
 	"rms/models"
 	"rms/utils"
+	"strings"
 )
 
-var JSON = jsoniter.ConfigCompatibleWithStandardLibrary
+var json = utils.JSON
 
-func Register(w http.ResponseWriter, r *http.Request) {
+func UserRegister(w http.ResponseWriter, r *http.Request) {
 	var user models.UserRequest
-	err := JSON.NewDecoder(r.Body).Decode(&user)
+	err := json.NewDecoder(r.Body).Decode(&user)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		utils.ResponseError(w, http.StatusBadRequest, "failed to parse request body")
 		return
 	}
-	validate := validator.New()
-	err = validate.Struct(user)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	//for leading spaces
+	user.Name = strings.TrimSpace(user.Name)
+	user.Email = strings.TrimSpace(user.Email)
+	if user.Name == "" || user.Email == "" || user.Password == "" || user.Address == "" || user.Latitude < 0 || user.Longitude < 0 {
+		utils.ResponseError(w, http.StatusBadRequest, "name , email , password, role , address , latitude , longitude are mandatory ")
 		return
 	}
 	exist, existErr := dbHelper.IsUserExists(user.Email)
 	if existErr != nil {
-		http.Error(w, existErr.Error(), http.StatusBadRequest)
+		utils.ResponseError(w, http.StatusBadRequest, "error in checking existence of user")
+		return
 	}
 	if exist {
-		http.Error(w, "user already exits", http.StatusBadRequest)
+		//error 409 status conflict
+		utils.ResponseError(w, http.StatusConflict, "user with this email already exists")
 		return
 	}
 	hashedPassword, err := utils.HashedPassword(user.Password)
 	if err != nil {
-		http.Error(w, "failed to generate hashedPassword", http.StatusBadRequest)
+		//500 internal server error
+		utils.ResponseError(w, http.StatusInternalServerError, "failed to hash password")
 		return
 	}
 	user.Password = hashedPassword
-	err = dbHelper.CreateUser(user)
+	err = dbHelper.CreateUser(&user)
+
 	if err != nil {
-		http.Error(w, "failed to create user", http.StatusBadRequest)
+		// 500 internal server error
+		utils.ResponseError(w, http.StatusInternalServerError, "failed to create user")
 		return
 	}
 	response := models.UserResponse{
@@ -57,72 +61,169 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		Latitude:  user.Latitude,
 		Longitude: user.Longitude,
 	}
-	err = JSON.NewEncoder(w).Encode(response)
+	err = json.NewEncoder(w).Encode(response)
 	if err != nil {
-		http.Error(w, "failed to encode response", http.StatusInternalServerError)
+		utils.ResponseError(w, http.StatusBadRequest, "failed to encode response")
 		return
 	}
 }
 
-func Login(w http.ResponseWriter, r *http.Request) {
+//func RegisterUser(w http.ResponseWriter, r *http.Request) {
+//	var adminRequest models.RegisterAdminRequest
+//	err := json.NewDecoder(r.Body).Decode(&adminRequest)
+//	if err != nil {
+//		utils.ResponseError(w, http.StatusBadRequest, "failed to parse request body")
+//		return
+//	}
+//	if adminRequest.Name == "" || adminRequest.Email == "" || adminRequest.Role == "" || adminRequest.Password == "" || adminRequest.Address == "" || adminRequest.Latitude < 0 || adminRequest.Longitude < 0 {
+//		utils.ResponseError(w, http.StatusBadRequest, "name , email , password, role , address , latitude , longitude are mandatory ")
+//		return
+//	}
+//	exist, existErr := dbHelper.IsUserExists(adminRequest.Email)
+//	if existErr != nil {
+//		utils.ResponseError(w, http.StatusBadRequest, "error in checking existence of user")
+//		return
+//	}
+//	if exist {
+//		utils.ResponseError(w, http.StatusBadRequest, "user with this email already exists")
+//		return
+//	}
+//	adminRequest.Password, err = utils.HashedPassword(adminRequest.Password)
+//	if err != nil {
+//		utils.ResponseError(w, http.StatusBadRequest, "failed to hash password")
+//		return
+//	}
+//	//err := CreateUserWithRole(&adminRequest)
+//
+//}
+
+// Login Normal User
+func UserLogin(w http.ResponseWriter, r *http.Request) {
 	var login models.LoginRequest
-	err := JSON.NewDecoder(r.Body).Decode(&login)
+	err := json.NewDecoder(r.Body).Decode(&login)
 	if err != nil {
-		http.Error(w, "invalid JSON response", http.StatusBadRequest)
+		utils.ResponseError(w, http.StatusBadRequest, "failed to parse request body for login")
 		return
 	}
-	validate := validator.New()
-	err = validate.Struct(login)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if login.Email == "" || login.Password == "" {
+		utils.ResponseError(w, http.StatusBadRequest, "email and password are mandatory")
 		return
 	}
-	var hashedPassword string
-	var userID uuid.UUID
-	err = database.DB.QueryRow("SELECT id ,password FROM users WHERE email = $1", login.Email).Scan(&userID, &hashedPassword)
+	var LoginDetails models.LoginIDAndPassword
+	err = dbHelper.LookupUserCredentials(&LoginDetails, login.Email)
 	if err != nil {
-		http.Error(w, "user not found", http.StatusUnauthorized)
+		utils.ResponseError(w, http.StatusBadRequest, "failed to lookup user")
 		return
 	}
-	if !utils.CheckPasswordHash(login.Password, hashedPassword) {
+	if !utils.CheckPasswordHash(login.Password, LoginDetails.Password) {
 		logrus.Errorf("invalid password %+v", err)
 	}
 	var userSessionID uuid.UUID
-	userSessionID, err = dbHelper.CreateUserSession(userID)
+	userSessionID, err = dbHelper.CreateUserSession(LoginDetails.UserID)
 
 	userResponse := models.LoginResponse{
 		Message:               "User logged in",
 		Name:                  login.Email,
 		UserSessionIDResponse: userSessionID,
 	}
-	err = JSON.NewEncoder(w).Encode(userResponse)
+	err = json.NewEncoder(w).Encode(userResponse)
 	if err != nil {
 		http.Error(w, "failed to encode response", http.StatusInternalServerError)
 	}
 }
 
-func Logout(w http.ResponseWriter, r *http.Request) {
-	userSessionToken := r.Header.Get("Authorization")
-	if userSessionToken == "" {
-		http.Error(w, "missing session token", http.StatusBadRequest)
-		return
-	}
-	var archived sql.NullTime
-	err := database.DB.QueryRow(` SELECT archived_at FROM user_session WHERE id = $1`, userSessionToken).Scan(&archived)
+// Login Admin
+func LoginAsAdmin(w http.ResponseWriter, r *http.Request) {
+	loginWithRole(w, r, "admin")
+}
+func loginWithRole(w http.ResponseWriter, r *http.Request, role string) {
+	var login models.LoginRequest
+	err := json.NewDecoder(r.Body).Decode(&login)
 	if err != nil {
-		http.Error(w, "session not found", http.StatusNotFound)
+		utils.ResponseError(w, http.StatusBadRequest, "failed to parse request body")
 		return
 	}
-	err = dbHelper.LogoutUserByArchiving(userSessionToken)
-
-	err = JSON.NewEncoder(w).Encode(map[string]string{
-		"message": "logout successfully",
+	if login.Email == "" || login.Password == "" {
+		utils.ResponseError(w, http.StatusBadRequest, "email and password are mandatory")
+		return
+	}
+	var loginDetailsByRole models.LoginIDAndPasswordByRole
+	var hasRole bool
+	err = dbHelper.LookupUserCredentialsByRole(&loginDetailsByRole, login.Email, role, &hasRole)
+	if err != nil {
+		utils.ResponseError(w, http.StatusBadRequest, "failed to lookup user")
+		return
+	}
+	if hasRole == false {
+		utils.ResponseError(w, http.StatusBadRequest, "unauthorized user")
+		return
+	}
+	tokenString, err := utils.GenerateJWT(&loginDetailsByRole)
+	if err != nil {
+		utils.ResponseError(w, http.StatusBadRequest, "failed to generate JWT token")
+		return
+	}
+	err = json.NewEncoder(w).Encode(map[string]string{
+		"jwtToken": tokenString,
 	})
 	if err != nil {
-		http.Error(w, "failed to encode response", http.StatusInternalServerError)
+		utils.ResponseError(w, http.StatusBadRequest, "failed to encode response")
 	}
 }
 
+func RegisterUserWithRole(w http.ResponseWriter, r *http.Request) {
+	var registerWithRole models.UserWithRoleRequest
+	err := json.NewDecoder(r.Body).Decode(&registerWithRole)
+	if err != nil {
+		utils.ResponseError(w, http.StatusBadRequest, "failed to parse request body")
+		return
+	}
+	if registerWithRole.Name == "" || registerWithRole.Email == "" || registerWithRole.Password == "" || registerWithRole.Role == "" || registerWithRole.Address == "" || registerWithRole.Latitude <= 0 || registerWithRole.Longitude <= 0 {
+		utils.ResponseError(w, http.StatusBadRequest, "name ,email,password,role , address ,latitude,longitude are mandatory fields ")
+	}
+	registerWithRole.Name = strings.TrimSpace(registerWithRole.Name)
+	registerWithRole.Email = strings.TrimSpace(registerWithRole.Email)
+	ctx := r.Context()
+	rawRoles := ctx.Value("roles")
+	roles, ok := rawRoles.([]models.Role)
+	if !ok {
+		utils.ResponseError(w, http.StatusBadRequest, "failed to get roles from the context")
+	}
+	if utils.CheckRoles(roles, registerWithRole.Role) == false {
+		utils.ResponseError(w, http.StatusBadRequest, "dont have permission to create the user!")
+		return
+	}
+	exist, existErr := dbHelper.IsUserExists(registerWithRole.Email)
+	if existErr != nil {
+		utils.ResponseError(w, http.StatusBadRequest, "error in checking existence of user")
+		return
+	}
+	if exist {
+		utils.ResponseError(w, http.StatusBadRequest, "user already exists")
+		return
+	}
+	registerWithRole.Password, err = utils.HashedPassword(registerWithRole.Password)
+	if err != nil {
+		utils.ResponseError(w, http.StatusBadRequest, "failed to hash password")
+	}
+	err = dbHelper.CreateUserWithRole(&registerWithRole, r)
+	if err != nil {
+		utils.ResponseError(w, http.StatusBadRequest, "failed to create user with role")
+		return
+	}
+	userWithRole := models.UserWithRoleResponse{
+		Name:      registerWithRole.Name,
+		Role:      registerWithRole.Role,
+		Email:     registerWithRole.Email,
+		Address:   registerWithRole.Address,
+		Latitude:  registerWithRole.Latitude,
+		Longitude: registerWithRole.Longitude,
+	}
+	err = json.NewEncoder(w).Encode(userWithRole)
+	if err != nil {
+		utils.ResponseError(w, http.StatusBadRequest, "failed to encode response")
+	}
+}
 func GetAllUsers(w http.ResponseWriter, r *http.Request) {
 	query := `SELECT id,name,email FROM users`
 	rows, err := database.DB.Query(query)
@@ -139,7 +240,7 @@ func GetAllUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		users = append(users, user)
 	}
-	JSON.NewEncoder(w).Encode(users)
+	json.NewEncoder(w).Encode(users)
 }
 
 func GetAllRestaurant(w http.ResponseWriter, r *http.Request) {
@@ -167,7 +268,7 @@ func GetAllRestaurant(w http.ResponseWriter, r *http.Request) {
 		}
 		restaurants = append(restaurants, restaurant)
 	}
-	JSON.NewEncoder(w).Encode(restaurants)
+	json.NewEncoder(w).Encode(restaurants)
 }
 
 func GetAllDishes(w http.ResponseWriter, r *http.Request) {
@@ -195,7 +296,7 @@ func GetAllDishes(w http.ResponseWriter, r *http.Request) {
 		}
 		dishes = append(dishes, dish)
 	}
-	JSON.NewEncoder(w).Encode(dishes)
+	json.NewEncoder(w).Encode(dishes)
 }
 
 func GetDistanceFromUser(w http.ResponseWriter, r *http.Request) {
@@ -237,7 +338,7 @@ func GetDistanceFromUser(w http.ResponseWriter, r *http.Request) {
 	Rcr := haversine.Coord{Lat: Rcordinate.lat, Lon: Rcordinate.long}
 	Ucr := haversine.Coord{Lat: Ucordinate.lat, Lon: Ucordinate.long}
 	_, km := haversine.Distance(Rcr, Ucr)
-	JSON.NewEncoder(w).Encode(map[string]float64{
+	json.NewEncoder(w).Encode(map[string]float64{
 		"Distance from restaurant to user's location": km,
 	})
 }
